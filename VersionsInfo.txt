@@ -1,0 +1,8 @@
+Hardware Version 1.0 - PCB Release Candidate
+	ESP32-WROOM-32
+	Galvanic isolated CAN BUS
+	Galvanic isolated RS422 Input and Output
+	DWWIN UART interface.
+	
+Firmware Version 1.0
+	Not implemented yet
