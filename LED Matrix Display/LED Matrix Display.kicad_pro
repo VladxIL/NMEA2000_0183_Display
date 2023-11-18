@@ -490,6 +490,14 @@
     [
       "02d83b85-cfa3-4125-bdd4-4666ac4bec4b",
       ""
+    ],
+    [
+      "a5c4692e-8268-4e5f-99a8-3858d34e691b",
+      "LEDS Only"
+    ],
+    [
+      "3ffbcd43-3a32-410d-bdaf-78046e2ef2b3",
+      "ESP32"
     ]
   ],
   "text_variables": {}
