@@ -22,6 +22,9 @@
 #include <NMEA0183Msg.h>
 #include <NMEA0183Stream.h>
 #include "BoatData.h"
+#include "Adafruit_TSL2561_U.h"
+#include <BME280I2C.h>
+#include <Wire.h>
 
 #define SCLK 18
 #define MISO 19
@@ -34,6 +37,10 @@
 
 #define RXD2 26
 #define TXD2 27
+
+#define BUZZER_PIN 14
+#define LED_PIN 13
+
 
 int Counter = 0;
 int MyTime = 0;
@@ -70,6 +77,16 @@ const unsigned long ReceiveMessages[] PROGMEM = {/*126992L,*/ // System time
     };
     
 tN2kDataToNMEA0183 tN2kDataToNMEA0183(&NMEA2000, 0);
+
+// TSL2561
+Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
+bool TSL2561_present = false;
+
+// BME280 I2C
+BME280I2C bme;    // Default : forced mode, standby time = 1000 ms
+                  // Oversampling = pressure ×1, temperature ×1, humidity ×1, filter off,
+bool BME280I2C_present = false;
+
 
 void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
   Serial.printf("Listing directory: %s\n", dirname);
@@ -401,17 +418,88 @@ void SendNMEA0183Message(const tNMEA0183Msg &NMEA0183Msg) {
   // SendBufToClients(buf);
 }
 
+void configureTSL2561Sensor(void)
+{
+  /* You can also manually set the gain or enable auto-gain support */
+  // tsl.setGain(TSL2561_GAIN_1X);      /* No gain ... use in bright light to avoid sensor saturation */
+  // tsl.setGain(TSL2561_GAIN_16X);     /* 16x gain ... use in low light to boost sensitivity */
+  tsl.enableAutoRange(true);            /* Auto-gain ... switches automatically between 1x and 16x */
+  
+  /* Changing the integration time gives you better sensor resolution (402ms = 16-bit data) */
+  tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);      /* fast but low resolution */
+  // tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_101MS);  /* medium resolution and speed   */
+  // tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_402MS);  /* 16-bit data but slowest conversions */
+
+  // /* Update these values depending on what you've set above! */  
+  // Serial.println("------------------------------------");
+  // Serial.print  ("Gain:         "); Serial.println("Auto");
+  // Serial.print  ("Timing:       "); Serial.println("13 ms");
+  // Serial.println("------------------------------------");
+}
+
+void configureBME280I2CSensor(void)
+{
+  int i = 10;
+  Wire.begin();
+
+  // 10 times
+  while(!bme.begin() &&(i-- > 0))
+  {
+    Serial.println("Could not find BME280 sensor!");
+    return;
+  }
+
+  // switch(bme.chipModel())
+  // {
+  //    case BME280::ChipModel_BME280:
+  //      Serial.println("Found BME280 sensor! Success.");
+  //      break;
+  //    case BME280::ChipModel_BMP280:
+  //      Serial.println("Found BMP280 sensor! No Humidity available.");
+  //      break;
+  //    default:
+  //      Serial.println("Found UNKNOWN sensor! Error!");
+  // }
+}
+
+void printBME280Data(Stream* client){
+   float temp(NAN), hum(NAN), pres(NAN);
+
+   BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+   BME280::PresUnit presUnit(BME280::PresUnit_Pa);
+
+   bme.read(pres, temp, hum, tempUnit, presUnit);
+
+   client->print("BME280--> Temp: ");
+   client->print(temp);
+   client->print("°"+ String(tempUnit == BME280::TempUnit_Celsius ? 'C' :'F'));
+   client->print("\t\tHumidity: ");
+   client->print(hum);
+   client->print("% RH");
+   client->print("\t\tPressure: ");
+   client->print(pres);
+   client->println("Pa");
+}
 
 
 
 
 
 
+
+
+// -------------------------------------------------------------------------------------------------------------------------------------------
 void setup(){
   uint8_t chipid[6];
   uint32_t id = 0;
   int i = 0;
 
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  
   Serial.begin(115200);
 
   Serial1.begin(4800, SERIAL_8N1, RXD1, TXD1);    //Hardware Serial of ESP32
@@ -475,8 +563,11 @@ void setup(){
     Serial.println("ERROR! NMEA2000.Open");
 
 
+  digitalWrite(BUZZER_PIN, HIGH);  
+  digitalWrite(LED_PIN, HIGH);
   delay(300);
-
+  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(LED_PIN, LOW);
 
 
   if(!SD.begin(sdCS)){
@@ -519,6 +610,24 @@ void setup(){
   //testFileIO(SD, "/test.txt");
   Serial.printf("Total space: %lluMB\n", SD.totalBytes() / (1024 * 1024));
   Serial.printf("Used space: %lluMB\n", SD.usedBytes() / (1024 * 1024));
+
+
+  /* Initialise the TSL2561 sensor */
+  //use tsl.begin() to default to Wire, 
+  //tsl.begin(&Wire2) directs api to use Wire2, etc.
+  if(!tsl.begin())
+  {
+    /* There was a problem detecting the TSL2561 ... check your connections */
+    Serial.print("Ooops, no TSL2561 detected ... Check your wiring or I2C ADDR!");
+    while(1);
+  }
+
+
+  /* Initialise the BME280 I2C sensor */
+  configureBME280I2CSensor();
+
+  /* Setup the sensor gain and integration time */
+  configureTSL2561Sensor();
 }
 
 void loop(){
@@ -540,14 +649,43 @@ void loop(){
 
   tN2kDataToNMEA0183.Update(&BoatData);
 
-  // 1 sec 
+  // 1 sec ----------------------------------------------------------------
   if ((MyTime != millis()) && (millis() % 1000) == 0){
     MyTime = millis();
+
+    //Serial.println(millis());
+
     DispBuf[7] = Counter++;
     Serial2.write(DispBuf, 8);
 
     // NMEA0183
     Serial1.println("$GPGGA,115739.00,4158.8441367,N,09147.4416929,W,4,13,0.9,255.747,M,-32.00,M,01,0000*6E");
+
+    // 5 sec -------------------------------------------------------------
+    if ((MyTime % 5000) == 0){
+
+        /* Get a new sensor event */ 
+        sensors_event_t event;
+        tsl.getEvent(&event);
+
+        /* Display the results (light is measured in lux) */
+        if (event.light)
+        {
+          Serial.print("TSL2561--> ");
+          Serial.print(event.light); 
+          Serial.println(" lux");
+        }
+        else
+        {
+          /* If event.light = 0 lux the sensor is probably saturated
+            and no reliable data could be generated! */
+          Serial.println("TSL2561--> Sensor overload");
+        }
+
+        printBME280Data(&Serial);
+
+    }
+
   }
 
 
