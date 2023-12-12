@@ -40,8 +40,10 @@
 
 #define BUZZER_PIN 14
 #define LED_PIN 13
+#define VIN_A2D_PIN 35
 
-
+#define ADC_Calibration_Value 5.0f // The real value depends on the true resistor values for the ADC input (100K / 27 K)
+float voltage = 0;
 int Counter = 0;
 int MyTime = 0;
 byte DispBuf[100];
@@ -481,12 +483,39 @@ void printBME280Data(Stream* client){
    client->println("Pa");
 }
 
-
-
-
-
-
-
+// https://github.com/G6EJD/ESP32-ADC-Accuracy-Improvement-function/blob/master/ESP32_ADC_Read_Voltage_Accurate.ino
+double ReadVoltage(byte pin){
+  double reading = analogRead(pin); // Reference voltage is 3v3 so maximum reading is 3v3 = 4095 in range 0 to 4095
+  if(reading < 1 || reading > 4095) return 0;
+  // return -0.000000000009824 * pow(reading,3) + 0.000000016557283 * pow(reading,2) + 0.000854596860691 * reading + 0.065440348345433;
+  return -0.000000000000016 * pow(reading,4) + 0.000000000118171 * pow(reading,3)- 0.000000301211691 * pow(reading,2)+ 0.001109019271794 * reading + 0.034143524634089;
+} // Added an improved polynomial, use either, comment out as required
+ 
+void setupADC() {
+  /*
+  analogReadResolution(12);             // Sets the sample bits and read resolution, default is 12-bit (0 - 4095), range is 9 - 12 bits
+  analogSetWidth(12);                   // Sets the sample bits and read resolution, default is 12-bit (0 - 4095), range is 9 - 12 bits
+                                        //  9-bit gives an ADC range of 0-511
+                                        // 10-bit gives an ADC range of 0-1023
+                                        // 11-bit gives an ADC range of 0-2047
+                                        // 12-bit gives an ADC range of 0-4095
+  analogSetCycles(8);                   // Set number of cycles per sample, default is 8 and provides an optimal result, range is 1 - 255
+  analogSetSamples(1);                  // Set number of samples in the range, default is 1, it has an effect on sensitivity has been multiplied
+  analogSetClockDiv(1);                 // Set the divider for the ADC clock, default is 1, range is 1 - 255
+  analogSetAttenuation(ADC_11db);       // Sets the input attenuation for ALL ADC inputs, default is ADC_11db, range is ADC_0db, ADC_2_5db, ADC_6db, ADC_11db
+  analogSetPinAttenuation(VP,ADC_11db); // Sets the input attenuation, default is ADC_11db, range is ADC_0db, ADC_2_5db, ADC_6db, ADC_11db
+                                        // ADC_0db provides no attenuation so IN/OUT = 1 / 1 an input of 3 volts remains at 3 volts before ADC measurement
+                                        // ADC_2_5db provides an attenuation so that IN/OUT = 1 / 1.34 an input of 3 volts is reduced to 2.238 volts before ADC measurement
+                                        // ADC_6db provides an attenuation so that IN/OUT = 1 / 2 an input of 3 volts is reduced to 1.500 volts before ADC measurement
+                                        // ADC_11db provides an attenuation so that IN/OUT = 1 / 3.6 an input of 3 volts is reduced to 0.833 volts before ADC measurement
+  adcAttachPin(VP);                     // Attach a pin to ADC (also clears any other analog mode that could be on), returns TRUE/FALSE result 
+  adcStart(VP);                         // Starts an ADC conversion on attached pin's bus
+  adcBusy(VP);                          // Check if conversion on the pin's ADC bus is currently running, returns TRUE/FALSE result 
+  adcEnd(VP);                           // Get the result of the conversion (will wait if it have not finished), returns 16-bit integer result
+  */
+  adcAttachPin(VIN_A2D_PIN);
+  analogSetClockDiv(255); // 1338mS
+}
 
 // -------------------------------------------------------------------------------------------------------------------------------------------
 void setup(){
@@ -499,8 +528,9 @@ void setup(){
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  
   Serial.begin(115200);
+
+  // setupADC();
 
   Serial1.begin(4800, SERIAL_8N1, RXD1, TXD1);    //Hardware Serial of ESP32
   pinMode(EXD1, OUTPUT);
@@ -664,13 +694,14 @@ void loop(){
     // 5 sec -------------------------------------------------------------
     if ((MyTime % 5000) == 0){
 
+        Serial.println("------------- 5s --------------------");
+
         /* Get a new sensor event */ 
         sensors_event_t event;
         tsl.getEvent(&event);
 
         /* Display the results (light is measured in lux) */
-        if (event.light)
-        {
+        if (event.light){
           Serial.print("TSL2561--> ");
           Serial.print(event.light); 
           Serial.println(" lux");
@@ -684,6 +715,18 @@ void loop(){
 
         printBME280Data(&Serial);
 
+        // 2.33V vhen 11.5V
+        double A2D = ReadVoltage(VIN_A2D_PIN);
+        Serial.print("VIN--> ");
+        Serial.print(A2D * ADC_Calibration_Value); 
+        Serial.println("V");
+        //Serial.println((analogRead(35) * 5.12) / 1000.0);     
+
+
+
+        
+           
+        Serial.println("");
     }
 
   }
